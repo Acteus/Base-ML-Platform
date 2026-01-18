@@ -32,6 +32,8 @@ def detect_file_type(filename: str) -> str:
         return 'excel'
     elif filename_lower.endswith('.parquet'):
         return 'parquet'
+    elif filename_lower.endswith('.ipynb'):
+        return 'notebook'
     else:
         return 'unknown'
 

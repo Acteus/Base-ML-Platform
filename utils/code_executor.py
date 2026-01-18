@@ -83,6 +83,7 @@ def execute_code(
     success = False
     error_msg = None
     variables = {}
+    captured_figures = []
     
     try:
         # Execute code with captured output
@@ -92,6 +93,17 @@ def execute_code(
             # Compile and execute code
             compiled_code = compile(code, '<user_code>', 'exec')
             exec(compiled_code, exec_namespace)
+            
+            # Capture matplotlib figures IMMEDIATELY after execution, before plt.show() clears them
+            # Must happen inside the exec context while figures still exist
+            captured_figures = []
+            try:
+                fig_nums = exec_namespace['plt'].get_fignums()
+                for fig_num in fig_nums:
+                    fig = exec_namespace['plt'].figure(fig_num)
+                    captured_figures.append(fig)
+            except Exception:
+                pass
             
             # Try to get the result (last expression)
             if 'result' in exec_namespace:
@@ -127,7 +139,8 @@ def execute_code(
         'output': output,
         'error': error_msg,
         'result': result,
-        'variables': variables
+        'variables': variables,
+        'figures': captured_figures
     }
 
 
@@ -141,5 +154,5 @@ def get_matplotlib_figures() -> list:
     try:
         import matplotlib.pyplot as plt
         return plt.get_fignums()
-    except:
+    except Exception:
         return []

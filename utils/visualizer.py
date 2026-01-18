@@ -62,18 +62,28 @@ def display_results(execution_result: Dict[str, Any], data: Any = None):
     
     with tab4:
         st.subheader("Visualizations")
-        # Try to get matplotlib figures
-        try:
-            import matplotlib.pyplot as plt
-            fig_nums = plt.get_fignums()
-            if fig_nums:
-                for fig_num in fig_nums:
-                    fig = plt.figure(fig_num)
+        # Use captured figures from execution result (captured before plt.show() clears them)
+        captured_figs = execution_result.get('figures', [])
+        
+        if captured_figs:
+            for i, fig in enumerate(captured_figs):
+                try:
                     st.pyplot(fig)
-            else:
-                st.info("No visualizations generated. Use plt.show() or return figure objects.")
-        except Exception as e:
-            st.info(f"No visualizations available: {str(e)}")
+                except Exception as e:
+                    st.warning(f"Could not render figure {i+1}: {str(e)}")
+        else:
+            # Fallback: try to get figures from plt directly (for non-notebook code)
+            try:
+                import matplotlib.pyplot as plt
+                fig_nums = plt.get_fignums()
+                if fig_nums:
+                    for fig_num in fig_nums:
+                        fig = plt.figure(fig_num)
+                        st.pyplot(fig)
+                else:
+                    st.info("No visualizations generated. Use plt.show() or return figure objects.")
+            except Exception as e:
+                st.info(f"No visualizations available: {str(e)}")
 
 
 def display_value(value: Any):

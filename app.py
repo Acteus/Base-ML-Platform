@@ -9,6 +9,7 @@ from utils.data_loader import load_data, get_data_info, detect_file_type
 from utils.code_executor import execute_code
 from utils.visualizer import display_results, display_data_preview
 from utils.parameter_parser import detect_parameters, update_code_with_parameters, has_adjustable_parameters
+from utils.notebook_loader import parse_notebook, extract_all_code, get_code_cells, get_notebook_summary, extract_code_cell
 
 # Page configuration
 st.set_page_config(
@@ -75,6 +76,10 @@ if 'show_sliders' not in st.session_state:
     st.session_state.show_sliders = False
 if 'param_values' not in st.session_state:
     st.session_state.param_values = {}
+if 'notebook_info' not in st.session_state:
+    st.session_state.notebook_info = None
+if 'notebook_loaded' not in st.session_state:
+    st.session_state.notebook_loaded = False
 
 
 def render_parameter_sliders(code: str) -> dict:
@@ -152,8 +157,8 @@ def main():
         
         uploaded_file = st.file_uploader(
             "Choose a file",
-            type=['csv', 'json', 'xlsx', 'xls', 'parquet'],
-            help="Supported formats: CSV, JSON, Excel, Parquet"
+            type=['csv', 'json', 'xlsx', 'xls', 'parquet', 'ipynb'],
+            help="Supported formats: CSV, JSON, Excel, Parquet, Jupyter Notebook"
         )
         
         if uploaded_file is not None:
@@ -161,18 +166,107 @@ def main():
             file_type = detect_file_type(uploaded_file.name)
             st.info(f"File type: {file_type.upper()}")
             
-            # Load data
-            with st.spinner("Loading data..."):
-                load_result = load_data(uploaded_file, uploaded_file.name)
-                
-                if load_result['error']:
-                    st.error(f"Error loading file: {load_result['error']}")
-                    st.session_state.uploaded_data = None
-                    st.session_state.data_info = None
-                else:
-                    st.session_state.uploaded_data = load_result['data']
-                    st.session_state.data_info = get_data_info(load_result['data'])
-                    st.success("Data loaded successfully!")
+            # Handle Jupyter Notebook files
+            if file_type == 'notebook':
+                with st.spinner("Parsing notebook..."):
+                    parse_result = parse_notebook(uploaded_file)
+                    
+                    if not parse_result['success']:
+                        st.error(f"Error parsing notebook: {parse_result['error']}")
+                        st.session_state.notebook_info = None
+                    else:
+                        st.session_state.notebook_info = parse_result['notebook_info']
+                        st.session_state.notebook_loaded = True
+                        
+                        # Display notebook summary
+                        nb_info = parse_result['notebook_info']
+                        summary = get_notebook_summary(nb_info)
+                        
+                        st.markdown("#### Notebook Info")
+                        st.write(f"**Kernel:** {summary['kernel']}")
+                        st.write(f"**Code cells:** {summary['code_cells']}")
+                        st.write(f"**Total lines:** {summary['total_code_lines']}")
+                        
+                        st.markdown("---")
+                        st.markdown("#### Load Code Cells")
+                        
+                        code_cells = get_code_cells(nb_info)
+                        
+                        if code_cells:
+                            # Quick run button for entire notebook
+                            st.markdown("#### Quick Actions")
+                            if st.button("▶️ Run Notebook", key="run_notebook_btn", type="primary", use_container_width=True):
+                                combined_code = extract_all_code(nb_info, include_comments=True)
+                                st.session_state.current_code = combined_code
+                                st.session_state.param_values = {}
+                                with st.spinner("Executing notebook..."):
+                                    execution_result = execute_code(
+                                        code=combined_code,
+                                        data=st.session_state.uploaded_data,
+                                        timeout=60
+                                    )
+                                    st.session_state.execution_result = execution_result
+                                st.rerun()
+                            
+                            st.markdown("---")
+                            st.markdown("#### Load Code Cells")
+                            
+                            # Option to load all cells or select specific ones
+                            load_option = st.radio(
+                                "Load option:",
+                                ["All code cells", "Select specific cells"],
+                                key="nb_load_option"
+                            )
+                            
+                            if load_option == "All code cells":
+                                if st.button("Load All Code", key="load_all_nb"):
+                                    combined_code = extract_all_code(nb_info, include_comments=True)
+                                    st.session_state.current_code = combined_code
+                                    st.session_state.param_values = {}
+                                    st.success(f"Loaded {len(code_cells)} code cells!")
+                                    st.rerun()
+                            else:
+                                # Show cell selector
+                                st.write("**Available code cells:**")
+                                selected_cells = []
+                                for cell in code_cells:
+                                    preview = cell.source[:80].replace('\n', ' ')
+                                    if len(cell.source) > 80:
+                                        preview += "..."
+                                    if st.checkbox(
+                                        f"Cell {cell.index + 1}: `{preview}`",
+                                        key=f"cell_{cell.index}"
+                                    ):
+                                        selected_cells.append(cell.index)
+                                
+                                if selected_cells and st.button("Load Selected Cells", key="load_selected_nb"):
+                                    code_parts = []
+                                    for idx in sorted(selected_cells):
+                                        code = extract_code_cell(nb_info, idx)
+                                        if code:
+                                            code_parts.append(f"# --- Cell {idx + 1} ---")
+                                            code_parts.append(code.strip())
+                                    st.session_state.current_code = '\n\n'.join(code_parts)
+                                    st.session_state.param_values = {}
+                                    st.success(f"Loaded {len(selected_cells)} cells!")
+                                    st.rerun()
+                        else:
+                            st.warning("No code cells found in notebook.")
+            else:
+                # Load data files (CSV, JSON, Excel, Parquet)
+                with st.spinner("Loading data..."):
+                    load_result = load_data(uploaded_file, uploaded_file.name)
+                    
+                    if load_result['error']:
+                        st.error(f"Error loading file: {load_result['error']}")
+                        st.session_state.uploaded_data = None
+                        st.session_state.data_info = None
+                    else:
+                        st.session_state.uploaded_data = load_result['data']
+                        st.session_state.data_info = get_data_info(load_result['data'])
+                        st.session_state.notebook_info = None
+                        st.session_state.notebook_loaded = False
+                        st.success("Data loaded successfully!")
         
         st.markdown("---")
         st.markdown("### Tips")
@@ -181,6 +275,7 @@ def main():
         - Pre-imported: `pd`, `np`, `plt`, `sns`, `sklearn`
         - Use `plt.show()` or return figure objects for visualizations
         - Parameters like `learning_rate`, `n_clusters`, etc. get auto-detected sliders
+        - Upload `.ipynb` files to import code from Jupyter notebooks
         """)
     
     # Main content area
@@ -190,14 +285,19 @@ def main():
         st.header("Data Preview")
         if st.session_state.uploaded_data is not None:
             display_data_preview(st.session_state.data_info)
+        elif st.session_state.notebook_loaded:
+            st.info("📓 Notebook code loaded. You can optionally upload a data file, or run the code if it loads its own data.")
         else:
             st.info("Please upload a data file from the sidebar to get started.")
     
     with col2:
         st.header("Algorithm Editor")
         
-        if st.session_state.uploaded_data is None:
-            st.warning("Please upload data first before writing algorithms.")
+        # Allow editing if data is uploaded OR if notebook code was loaded
+        can_edit = st.session_state.uploaded_data is not None or st.session_state.notebook_loaded
+        
+        if not can_edit:
+            st.warning("Please upload data or a notebook file to get started.")
             code_input = st.text_area(
                 "Python Code",
                 value=st.session_state.current_code,
